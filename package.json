@@ -4,8 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "dev:core": "pnpm --filter @your_radar/core run dev:langgraph",
     "build": "pnpm -r run build",
     "build:core": "pnpm --filter @your_radar/core run build",
+    "build:cli": "pnpm --filter @your_radar/cli run build",
     "exec:core": "npm run build:core && node ./packages/core/dist/index.js"
   },
   "workspaces": [

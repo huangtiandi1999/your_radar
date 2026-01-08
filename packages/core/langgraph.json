@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "emailAgent": "./src/graph/graph.ts:emailAgent" 
+  },
+  "env": ".env"
+}
