@@ -2,3 +2,7 @@
 packages:
   - 'packages/*'
   - 'apps/*'
+
+catalogs:
+  default:
+    typescript: "^5.8.3"

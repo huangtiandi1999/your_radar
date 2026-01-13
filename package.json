@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "dev": "pnpm --parallel -r run dev",
     "dev:core": "pnpm --filter @your_radar/core run dev:langgraph",
     "build": "pnpm -r run build",
     "build:core": "pnpm --filter @your_radar/core run build",
