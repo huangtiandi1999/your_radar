@@ -1,5 +1,20 @@
 @import "tailwindcss";
 
+@plugin "tailwindcss-animate";
+@plugin "@tailwindcss/typography";
+
+@theme {
+  /* 显式定义颜色令牌，这样 bg-secondary, text-secondary 才会生效 */
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-primary: hsl(var(--primary));
+  --color-secondary: var(--secondary);
+  --color-border: hsl(var(--border));
+  
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;
@@ -10,7 +25,7 @@
     --popover-foreground: 0 0% 3.9%;
     --primary: 0 0% 9%;
     --primary-foreground: 0 0% 98%;
-    --secondary: 0 0% 96.1%;
+    --secondary: lab(96.52% -.0000298023 .0000119209);
     --secondary-foreground: 0 0% 9%;
     --muted: 0 0% 96.1%;
     --muted-foreground: 0 0% 45.1%;
@@ -69,5 +84,6 @@
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
+    font-feature-settings: "rlig" 1, "calt" 1;
   }
 }

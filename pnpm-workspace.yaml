@@ -6,3 +6,6 @@ packages:
 catalogs:
   default:
     typescript: "^5.8.3"
+    zod: "^4.2.0"
+    ai: "^6.0.37"
+    dotenv-cli: "^11.0.0"

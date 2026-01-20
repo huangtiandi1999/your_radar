@@ -1,41 +1,31 @@
-import { serve } from '@hono/node-server'
-import { cors } from 'hono/cors';
-import { streamSSE } from 'hono/streaming';
+// import dotenv from 'dotenv';
+// import path from 'path';
 import { Hono } from 'hono'
+import { cors } from 'hono/cors';
+import { serve } from '@hono/node-server'
+import { openai_llm } from '@your_radar/core';
+import { createUIMessageStreamResponse } from 'ai';
+import { toBaseMessages, toUIMessageStream } from '@ai-sdk/langchain';
 
-const app = new Hono()
+console.log('process.env.API_BASE_URL', process.env.API_BASE_URL);
+
+const app = new Hono();
 
 app.use('/api/*', cors({
   origin: '*',
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 }));
 
-app.get('/api/test', (c) => {
-  return c.json({
-    name: 'test',
-  })
-})
+app.post('/api/chat', async (c) => {
+  const { messages } = await c.req.json();
+  console.log('请求消息', messages);
+  const langchainMessages = await toBaseMessages(messages);
+  const result = await openai_llm.stream(langchainMessages);
 
-app.get('/api/chat', (c) => {
-  return streamSSE(
-    c, 
-    async (stream) => {
-      const text = 'hello my name is yefan';
-      const words = text.split(' ');
-      for (const word of words) {
-        await stream.writeSSE({
-          data: word + " ",
-          event: 'message',
-        })
-        await stream.sleep(200);
-      }
-      await stream.writeSSE({
-        data: 'end',
-        event: 'done',
-      })
-    },
-  );
-})
+  return createUIMessageStreamResponse({
+    stream: toUIMessageStream(result),
+  });
+});
 
 serve({
   fetch: app.fetch,

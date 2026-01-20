@@ -2,17 +2,21 @@
   "name": "radar_server",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "dotenv -e ../../.env -- tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@ai-sdk/langchain": "^2.0.42",
     "@hono/node-server": "^1.19.8",
+    "@your_radar/core": "workspace:*",
+    "ai": "catalog:default",
     "hono": "^4.11.4"
   },
   "devDependencies": {
     "@types/node": "^20.11.17",
     "tsx": "^4.7.1",
+    "dotenv-cli": "catalog:default",
     "typescript": "catalog:default"
   }
 }
