@@ -97,7 +97,7 @@ async function generateInitialDraft(state: WriterStateType): Promise<Partial<Wri
     spin.stop(`初始方案生成完成 (${draft.length} 字符)`);
     return { 
       initialDraft: draft,
-      iteration: currentIteration + 1,
+      // 生成初始方案不增加迭代次数，迭代次数在反思评估完成后才增加
     };
   } catch (error) {
     spin.stop('生成初始方案失败 ❌');
@@ -167,10 +167,11 @@ async function reflectOnDraft(state: WriterStateType): Promise<Partial<WriterSta
   } catch (error) {
     spin.stop('反思评估失败 ❌');
     console.error('[Writer] 反思评估失败:', error);
-    // 如果反思失败，默认不需要改进
+    // 如果反思失败，默认不需要改进，但仍然增加迭代次数
     return {
       reflection: '反思过程出现错误，无法评估',
       needsImprovement: false,
+      iteration: currentIteration + 1, // 即使失败也增加迭代次数
     };
   }
 }
@@ -218,7 +219,7 @@ async function improveDraft(state: WriterStateType): Promise<Partial<WriterState
     spin.stop(`方案改进完成 (${improved.length} 字符)`);
     return { 
       improvedDraft: improved,
-      iteration: currentIteration + 1,
+      // 改进方案不增加迭代次数，迭代次数在反思评估完成后才增加
     };
   } catch (error) {
     spin.stop('改进方案失败 ❌');
@@ -226,7 +227,7 @@ async function improveDraft(state: WriterStateType): Promise<Partial<WriterState
     // 如果改进失败，返回当前方案
     return { 
       improvedDraft: currentDraft,
-      iteration: currentIteration + 1,
+      // 改进方案不增加迭代次数，迭代次数在反思评估完成后才增加
     };
   }
 }

@@ -2,7 +2,7 @@ import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/lang
 import { planner, PlannerOutputType } from '@/model/claude';
 import { runDeepResearch } from '@/graph/research';
 import { runWriterAgent } from '@/graph/writer';
-import { spinner, note } from '@clack/prompts';
+import { spinner, note, text, cancel, isCancel } from '@clack/prompts';
 // import z from 'zod';
 
 /**
@@ -14,6 +14,8 @@ type Task = {
   description: string;
   agentType: 'researcher' | 'writer' | 'designer';
 };
+
+const maxClarifications = 2;
 
 /**
  * Agent 工作流状态定义
@@ -30,6 +32,18 @@ const AgentState = Annotation.Root({
   }),
   planningResult: Annotation<PlannerOutputType>({
     reducer: (x, y) => y ?? x,
+  }),
+  needMoreInfo: Annotation<boolean>({
+    reducer: (x, y) => y ?? x ?? false,
+  }),
+  clarificationQuestions: Annotation<Array<string>>({
+    reducer: (x, y) => y ?? x ?? [],
+  }),
+  userClarifications: Annotation<string>({
+    reducer: (x, y) => y ?? x,
+  }),
+  clarificationCount: Annotation<number>({
+    reducer: (x, y) => y ?? x ?? 0,
   }),
   
   // 任务执行追踪
@@ -76,10 +90,92 @@ async function planning(state: AgentStateType): Promise<Partial<AgentStateType>>
   spin.start('正在生成营销计划...');
   
   try {
+    // 合并原始输入和用户补充的信息
+    const inputWithClarifications = state.userClarifications
+      ? `${state.userInput}\n\n用户补充信息：\n${state.userClarifications}`
+      : state.userInput;
+    
     const result: PlannerOutputType = await planner.invoke({
-      input: state.userInput,
+      input: inputWithClarifications,
     });
     
+    // 检查是否需要更多信息
+    if (result.needMoreInfo) {
+      const currentCount = state.clarificationCount ?? 0;
+      
+      // 如果已经达到最大次数，不再询问，直接使用已有信息继续
+      if (currentCount >= maxClarifications) {
+        spin.stop('已达到最大补充信息次数，将使用已有信息继续');
+        note(`已补充 ${currentCount} 次信息，将基于现有信息生成计划`, '⚠️');
+        
+        // 即使 planner 说需要更多信息，也强制继续
+        // 使用已有信息重新规划，但不设置 needMoreInfo
+        if (!result.plan || result.plan.length === 0) {
+          // 如果还是没有计划，返回错误
+          return {
+            error: '信息不足，无法生成有效的营销计划',
+            currentStep: 'error',
+          };
+        }
+        // 如果有计划，继续执行（会在下面处理）
+      } else {
+        // 未达到最大次数，继续询问
+        spin.stop('需要更多信息');
+        
+        if (result.clarificationQuestions && result.clarificationQuestions.length > 0) {
+          // 显示问题
+          const questionsText = result.clarificationQuestions
+            .map((q, index) => `${index + 1}. ${q}`)
+            .join('\n');
+          
+          note(questionsText, `❓ 需要补充以下信息 (${currentCount + 1}/${maxClarifications})`);
+          
+          // 获取用户输入
+          const clarification = await text({
+            message: '请补充上述信息',
+            placeholder: '请输入您的补充信息...',
+            validate: (value) => {
+              if (!value || value.trim().length === 0) {
+                return '输入不能为空';
+              }
+              return undefined;
+            },
+          });
+          
+          if (isCancel(clarification)) {
+            cancel('操作已取消');
+            return {
+              error: '用户取消了操作',
+              currentStep: 'error',
+            };
+          }
+          
+          // 保存用户补充的信息，并重新规划
+          // 将新的补充信息追加到已有的补充信息中
+          const updatedClarifications = state.userClarifications
+            ? `${state.userClarifications}\n\n${clarification.trim()}`
+            : clarification.trim();
+          
+          return {
+            planningResult: result,
+            needMoreInfo: true,
+            clarificationQuestions: result.clarificationQuestions,
+            userClarifications: updatedClarifications,
+            clarificationCount: currentCount + 1, // 增加计数
+            currentStep: 'planning', // 重新规划
+          };
+        } else {
+          // 如果没有提供问题，直接返回错误
+          spin.stop('需要更多信息，但未提供具体问题 ❌');
+          return {
+            error: '需要更多信息，但未提供具体问题',
+            currentStep: 'error',
+          };
+        }
+      }
+    }
+    
+    // 如果不需要更多信息，但 plan 为空或不存在
     if (!result.plan || result.plan.length === 0) {
       spin.stop('生成计划失败 ❌');
       return {
@@ -87,6 +183,9 @@ async function planning(state: AgentStateType): Promise<Partial<AgentStateType>>
         currentStep: 'error',
       };
     }
+    
+    // 成功生成计划，重置 needMoreInfo
+    spin.stop('计划生成完成');
     
     const allResearchTasks = result.plan.filter((task: Task) => task.agentType === 'researcher');
     if (allResearchTasks.length > 2) {
@@ -112,8 +211,6 @@ async function planning(state: AgentStateType): Promise<Partial<AgentStateType>>
     // 直接取 plan 的第一项来决定下一步
     const nextTask = result.plan[0];
     
-    spin.stop(`计划生成完成 (共 ${result.plan.length} 个任务)`);
-    
     // 使用 clack 打印计划列表
     const planOverview = result.plan
       .map((task: Task, index: number) => {
@@ -124,12 +221,13 @@ async function planning(state: AgentStateType): Promise<Partial<AgentStateType>>
       })
       .join('\n');
     
-    note(planOverview, '📊 营销计划');
+    note(planOverview, `📊 营销计划 (共 ${result.plan.length} 个任务)`);
     
     if (!nextTask) {
       return {
         planningResult: result,
         plan: result.plan,
+        needMoreInfo: false, // 重置 needMoreInfo
         currentStep: 'complete',
       };
     }
@@ -142,6 +240,7 @@ async function planning(state: AgentStateType): Promise<Partial<AgentStateType>>
     return {
       planningResult: result,
       plan: result.plan,
+      needMoreInfo: false, // 重置 needMoreInfo
       nextTask,
       currentTaskIndex: 0,
       currentStep: nextStep,
@@ -230,12 +329,11 @@ async function writing(state: AgentStateType): Promise<Partial<AgentStateType>> 
     const finalPlan = await runWriterAgent(
       researchReport,
       state.userInput,
-      3 // 最大迭代次数
+      2 // 最大反思次数
     );
     
     spin.stop(`营销方案生成完成: ${currentTask.taskName}`);
     
-    // writer 是最后一步，执行完成后直接结束
     return {
       finalPlan,
       aggregatedResearchReport: researchReport, // 保存聚合的研究报告
@@ -300,13 +398,20 @@ function routeAfterPlanning(state: AgentStateType): string {
     return 'end';
   }
   
+  // 如果需要重新规划（用户补充了信息）
+  if (state.currentStep === 'planning' && state.needMoreInfo && state.userClarifications) {
+    return 'planning'; // 重新规划
+  }
+  
   // 根据 nextTask 的类型决定下一步
   if (state.currentStep === 'research') {
     return 'research';
   } else if (state.currentStep === 'writer') {
     return 'writer';
+  } else if (state.currentStep === 'complete') {
+    return 'end';
   } else {
-    return 'end'; // complete 或 error
+    return 'end'; // error 或其他情况
   }
 }
 
@@ -341,6 +446,7 @@ const agentWorkflow = new StateGraph(AgentState)
   .addNode('writer', writing)
   .addEdge(START, 'planning')
   .addConditionalEdges('planning', routeAfterPlanning, {
+    planning: 'planning', // 重新规划
     research: 'research',
     writer: 'writer',
     end: END,
