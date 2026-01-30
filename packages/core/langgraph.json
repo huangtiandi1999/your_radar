@@ -1,7 +1,8 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "emailAgent": "./src/graph/graph.ts:emailAgent" 
+    "emailAgent": "./src/graph/graph.ts:emailAgent",
+    "marketingAgent": "./src/graph/ai.ts:marketingAgent"
   },
-  "env": ".env"
+  "env": "../../.env"
 }

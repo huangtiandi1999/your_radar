@@ -5,8 +5,26 @@ import { TavilySearch } from "@langchain/tavily";
 import { z } from "zod";
 
 /**
+ * 搜索次数限制
+ */
+const MAX_SEARCH_COUNT = 5;
+
+/**
+ * 当前搜索次数计数器（每个研究任务独立）
+ */
+let currentSearchCount = 0;
+
+/**
+ * 重置搜索计数器
+ */
+function resetSearchCount() {
+  currentSearchCount = 0;
+}
+
+/**
  * 创建互联网搜索工具
  * 使用 TavilySearch 进行网络搜索
+ * 限制：每次研究任务最多搜索 5 次
  */
 const internetSearch = tool(
   async ({
@@ -20,7 +38,19 @@ const internetSearch = tool(
     topic?: "general" | "news" | "finance";
     includeRawContent?: boolean;
   }) => {
-    console.log(`\n[搜索] 查询: "${query}"`);
+    // 检查搜索次数限制
+    if (currentSearchCount >= MAX_SEARCH_COUNT) {
+      const errorMsg = `已达到最大搜索次数限制（${MAX_SEARCH_COUNT} 次）。请基于已有信息撰写研究报告。`;
+      console.log(`\n[搜索] ⚠️ ${errorMsg}`);
+      return {
+        error: errorMsg,
+        message: `已搜索 ${currentSearchCount} 次，已达到限制。请停止搜索，基于已有信息撰写报告。`,
+      };
+    }
+    
+    // 增加搜索计数
+    currentSearchCount++;
+    console.log(`\n[搜索] 查询: "${query}" (第 ${currentSearchCount}/${MAX_SEARCH_COUNT} 次)`);
     console.log(`[搜索] 参数: maxResults=${maxResults}, topic=${topic}, includeRawContent=${includeRawContent}`);
     
     const tavilySearch = new TavilySearch({
@@ -75,7 +105,9 @@ const internetSearch = tool(
   },
   {
     name: "internet_search",
-    description: "运行网络搜索以获取信息。可以指定返回的最大结果数、主题类别以及是否包含原始内容。",
+    description: `运行网络搜索以获取信息。可以指定返回的最大结果数、主题类别以及是否包含原始内容。
+
+⚠️ 重要限制：每次研究任务最多只能搜索 ${MAX_SEARCH_COUNT} 次。请谨慎使用，确保每次搜索都有明确的目标。`,
     schema: z.object({
       query: z.string().describe("搜索查询语句"),
       maxResults: z
@@ -126,9 +158,11 @@ const researchInstructions = `你是一位资深的研究专家。你的职责�
 1. **理解任务**：仔细分析研究任务的要求和目标
 2. **直接执行搜索**：使用 internet_search 工具从多个角度搜索相关信息
    - **重要**：不要使用任何计划工具（如 todo_list），直接开始搜索
-   - 为每个研究维度生成不同的搜索查询
+   - **搜索次数限制**：每次研究任务最多只能搜索 ${MAX_SEARCH_COUNT} 次，请谨慎使用
+   - 为每个研究维度生成不同的搜索查询，确保每次搜索都有明确目标
    - 确保搜索覆盖任务的不同侧面
-   - 搜索3-5次后，如果已获得足够信息，应停止搜索并开始撰写报告
+   - 搜索 ${MAX_SEARCH_COUNT} 次后，必须停止搜索并开始撰写报告
+   - 如果达到搜索次数限制，系统会自动阻止进一步搜索，请基于已有信息撰写报告
 3. **整理信息**：将搜索到的信息整理和分类
 4. **撰写报告**：基于收集到的信息，撰写一份详尽、专业的研究报告
    - 使用 Markdown 格式
@@ -170,6 +204,9 @@ export const deepResearcher: ReturnType<typeof createDeepAgent> = createDeepAgen
  */
 export async function runDeepResearch(taskDescription: string): Promise<string> {
   console.log(`[DeepResearch] 开始执行研究任务: ${taskDescription}`);
+  
+  // 重置搜索计数器
+  resetSearchCount();
   
   try {
     const result = await deepResearcher.invoke(

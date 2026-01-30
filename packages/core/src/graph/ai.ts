@@ -189,7 +189,7 @@ async function planning(state: AgentStateType): Promise<Partial<AgentStateType>>
     
     const allResearchTasks = result.plan.filter((task: Task) => task.agentType === 'researcher');
     if (allResearchTasks.length > 2) {
-      console.log(`[Agent] 警告: 计划中包含 ${allResearchTasks.length} 个研究任务，将只执行前 2 个`);
+      // console.log(`[Agent] 警告: 计划中包含 ${allResearchTasks.length} 个研究任务，将只执行前 2 个`);
       const researchTaskIds = new Set(allResearchTasks.slice(0, 2).map(t => t.id));
       result.plan = result.plan.filter((task: Task) => 
         task.agentType !== 'researcher' || researchTaskIds.has(task.id)
@@ -200,11 +200,6 @@ async function planning(state: AgentStateType): Promise<Partial<AgentStateType>>
     const nonWriterTasks = result.plan.filter((task: Task) => task.agentType !== 'writer');
     
     if (writerTasks.length > 0) {
-      if (writerTasks.length > 1) {
-        console.log(`[Agent] 警告: 计划中包含 ${writerTasks.length} 个Write任务，将只保留最后一个`);
-      }
-      
-      // 重新排序：非 writer 任务在前，writer 任务在最后（只保留最后一个）
       result.plan = [...nonWriterTasks, writerTasks[writerTasks.length - 1]];
     }
     
