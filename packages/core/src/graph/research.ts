@@ -3,6 +3,50 @@ import { tool } from "langchain";
 import { ChatOpenAI } from "@langchain/openai";
 import { TavilySearch } from "@langchain/tavily";
 import { z } from "zod";
+import { Provider } from "@/constant/provider";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+/** packages/core 包根目录（源码在 src/graph，构建后在 dist/graph） */
+const PACKAGE_ROOT = join(__dirname, "..");
+/** 研究内容写入的目录：packages/core/memory */
+const MEMORY_DIR = join(PACKAGE_ROOT, "memory");
+
+/**
+ * 从任务描述生成安全的文件名片段（用于 md 文件名）
+ */
+function slugFromTask(taskDescription: string, maxLen = 15): string {
+  const sanitized = taskDescription
+    .replace(/[<>:"/\\|?*\s]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "")
+    .slice(0, maxLen);
+  return sanitized || "research";
+}
+
+/**
+ * 将研究内容写入 memory 目录下的 md 文件
+ * @param taskDescription - 任务描述（用于生成文件名）
+ * @param content - 研究报告内容
+ * @returns 写入的文件路径
+ */
+async function writeResearchToMemory(
+  taskDescription: string,
+  content: string,
+): Promise<string> {
+  await mkdir(MEMORY_DIR, { recursive: true });
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const slug = slugFromTask(taskDescription);
+  const filename = `${timestamp}_${slug}.md`;
+  const filePath = join(MEMORY_DIR, filename);
+
+  await writeFile(filePath, content, "utf-8");
+  console.log(`[DeepResearch] 研究内容已写入: ${filePath}`);
+  return filePath;
+}
 
 /**
  * 搜索次数限制
@@ -188,12 +232,12 @@ const researchInstructions = `你是一位资深的研究专家。你的职责�
  */
 export const deepResearcher: ReturnType<typeof createDeepAgent> = createDeepAgent({
   model: new ChatOpenAI({
-    model: 'claude-sonnet-4-20250514',
+    model: Provider.DEEPSEEK_R1_250528,
     configuration: {
         baseURL: process.env.API_BASE_URL,
     }
-  }) as any, // 使用类型断言解决版本兼容性问题
-  tools: [internetSearch] as any, // 使用类型断言解决版本兼容性问题
+  }) as any,
+  tools: [internetSearch] as any,
   systemPrompt: researchInstructions,
 });
 
@@ -232,6 +276,7 @@ export async function runDeepResearch(taskDescription: string): Promise<string> 
         if (lastMessage && typeof lastMessage === 'object' && 'content' in lastMessage) {
           const content = lastMessage.content;
           if (typeof content === 'string') {
+            await writeResearchToMemory(taskDescription, content);
             return content;
           }
         }
@@ -248,23 +293,28 @@ export async function runDeepResearch(taskDescription: string): Promise<string> 
           .join('\n\n');
         
         if (allContent) {
+          await writeResearchToMemory(taskDescription, allContent);
           return allContent;
         }
       }
       
       // 如果返回对象有 content 字段
       if ('content' in result && typeof result.content === 'string') {
+        await writeResearchToMemory(taskDescription, result.content);
         return result.content;
       }
     }
     
     // 如果返回的是字符串
     if (typeof result === 'string') {
+      await writeResearchToMemory(taskDescription, result);
       return result;
     }
     
     // 最后尝试转换为字符串
-    return JSON.stringify(result) || '未能生成研究报告';
+    const fallback = JSON.stringify(result) || '未能生成研究报告';
+    await writeResearchToMemory(taskDescription, fallback);
+    return fallback;
   } catch (error) {
     console.error('[DeepResearch] 执行失败:', error);
     throw error;

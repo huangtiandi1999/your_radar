@@ -1,8 +1,59 @@
 import z from 'zod';
+import { createAgent } from 'langchain';
 import { deepseek_llm } from '@/model/deepseek';
 import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/langgraph';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
 import { spinner } from '@clack/prompts';
+import { getLarkClient } from '@/mcp/lark';
+
+export type WriteToLarkOptions = {
+  /** 文档标题，默认「营销方案」 */
+  title?: string;
+  /** 父文件夹 token，不传则使用 MCP 默认目录 */
+  folder_token?: string;
+};
+
+/**
+ * 将最终方案写入飞书文档：使用飞书官方 MCP tools（含描述），由 agent 按描述调用 create-doc/update-doc 等
+ * @param content - 方案正文
+ * @param options - 可选：title、folder_token
+ */
+export async function writeFinalPlanToLark(
+  content: string,
+  options?: WriteToLarkOptions
+): Promise<void> {
+  const title = options?.title ?? '营销方案';
+  const folderHint = options?.folder_token
+    ? `文档请创建到 folder_token: ${options.folder_token}。`
+    : '';
+  const larkClient = await getLarkClient();
+  const tools = await larkClient.getTools('lark');
+  const agent = createAgent({
+    model: deepseek_llm,
+    tools,
+    checkpointer: new MemorySaver(),
+  });
+  const prompt = `请使用飞书文档工具，将以下营销方案创建为一篇飞书文档并写入全部正文。文档标题使用：${title}。${folderHint}\n\n方案内容：\n\n${content}`;
+  const resp = await agent.invoke(
+    { messages: prompt },
+    { configurable: { thread_id: `lark-write-${Date.now()}` } }
+  );
+  const larkLink = resp.messages[resp.messages.length - 1]?.content;
+  console.log('[Writer] 已通过飞书 MCP 工具写入文档，文档链接：', larkLink);
+}
+
+/** 研究报告最大字符数，超过则截断压缩以避免 invoke 报错 */
+const MAX_RESEARCH_LENGTH = 150_000;
+
+/**
+ * 若报告超过最大长度则截断并附加说明，避免 invoke 时超长报错
+ */
+function compressResearchReportIfNeeded(report: string): string {
+  if (report.length <= MAX_RESEARCH_LENGTH) return report;
+  const suffix = `\n\n---\n[报告过长已截断，原文共 ${report.length.toLocaleString()} 字符，此处保留前 ${MAX_RESEARCH_LENGTH.toLocaleString()} 字]`;
+  const keepLen = MAX_RESEARCH_LENGTH - suffix.length;
+  return report.slice(0, keepLen) + suffix;
+}
 
 /**
  * Writer Agent 状态定义
@@ -289,13 +340,15 @@ export const writerAgent = writerWorkflow.compile({
  * @param originalRequirement - 原始营销需求
  * @param maxIterations - 最大迭代次数，默认3次
  * @param threadId - 可选的线程ID，用于状态持久化和恢复。如果不提供，将自动生成
+ * @param writeToLark - 若为 true 或传入选项，则将最终方案写入飞书文档
  * @returns 最终营销方案
  */
 export async function runWriterAgent(
   researchReport: string,
   originalRequirement: string,
   maxIterations: number = 3,
-  threadId?: string
+  threadId?: string,
+  writeToLark?: boolean | WriteToLarkOptions
 ): Promise<string> {
   console.log(`[Writer] 开始执行 Writer Agent 任务`);
   console.log(`[Writer] 研究报告长度: ${researchReport.length} 字符`);
@@ -304,11 +357,16 @@ export async function runWriterAgent(
   // 如果没有提供 threadId，生成一个唯一的 ID
   const finalThreadId = threadId || `writer-${Date.now()}-${Math.random().toString(36).substring(7)}`;
   console.log(`[Writer] 线程ID: ${finalThreadId}`);
+
+  const reportToUse = compressResearchReportIfNeeded(researchReport);
+  if (reportToUse !== researchReport) {
+    console.log(`[Writer] 报告超过 ${MAX_RESEARCH_LENGTH.toLocaleString()} 字符，已截断压缩为 ${reportToUse.length.toLocaleString()} 字符`);
+  }
   
   try {
     const result = await writerAgent.invoke(
       {
-        researchReport,
+        researchReport: reportToUse,
         originalRequirement,
         iteration: 0,
         maxIterations,
@@ -325,6 +383,15 @@ export async function runWriterAgent(
     
     console.log(`[Writer] 任务完成，最终方案长度: ${finalPlan.length} 字符`);
     console.log(`[Writer] 总迭代次数: ${result.iteration}`);
+    
+    if (writeToLark) {
+      const larkOptions = typeof writeToLark === 'object' ? writeToLark : undefined;
+      try {
+        await writeFinalPlanToLark(finalPlan, larkOptions);
+      } catch (err) {
+        console.warn('[Writer] 飞书写入失败:', err instanceof Error ? err.message : err);
+      }
+    }
     
     return finalPlan;
   } catch (error) {

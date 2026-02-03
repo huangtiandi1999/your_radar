@@ -1,5 +1,7 @@
 import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/langgraph';
+import { HumanMessage } from '@langchain/core/messages';
 import { planner, PlannerOutputType } from '@/model/claude';
+import { openai_llm } from '@/model/openai';
 import { runDeepResearch } from '@/graph/research';
 import { runWriterAgent } from '@/graph/writer';
 import { spinner, note, text, cancel, isCancel } from '@clack/prompts';
@@ -98,8 +100,17 @@ async function planning(state: AgentStateType): Promise<Partial<AgentStateType>>
     const result: PlannerOutputType = await planner.invoke({
       input: inputWithClarifications,
     });
+
+    // 意图识别：简单问询交给简单回答节点处理（使用 GPT 5.1 chat）
+    if (result.intent === 'simple_question') {
+      spin.stop('识别为简单问询，交由简单回答节点处理');
+      return {
+        planningResult: result,
+        currentStep: 'simple_answer',
+      };
+    }
     
-    // 检查是否需要更多信息
+    // 检查是否需要更多信息（仅营销意图）
     if (result.needMoreInfo) {
       const currentCount = state.clarificationCount ?? 0;
       
@@ -324,7 +335,9 @@ async function writing(state: AgentStateType): Promise<Partial<AgentStateType>> 
     const finalPlan = await runWriterAgent(
       researchReport,
       state.userInput,
-      2 // 最大反思次数
+      2, // 最大反思次数
+      undefined, // threadId
+      true // 将最终方案写入飞书文档
     );
     
     spin.stop(`营销方案生成完成: ${currentTask.taskName}`);
@@ -339,6 +352,38 @@ async function writing(state: AgentStateType): Promise<Partial<AgentStateType>> 
     console.error('[Agent] 写作失败:', error);
     return {
       error: `写作失败: ${error instanceof Error ? error.message : String(error)}`,
+      currentStep: 'error',
+    };
+  }
+}
+
+/**
+ * 简单回答节点：使用 ChatGPT 5.1 chat 直接回答用户简单问询
+ */
+async function simpleAnswer(state: AgentStateType): Promise<Partial<AgentStateType>> {
+  const spin = spinner();
+  spin.start('正在回答...');
+  const input = state.userClarifications
+    ? `${state.userInput}\n\n用户补充：\n${state.userClarifications}`
+    : state.userInput;
+  try {
+    const response = await openai_llm.invoke([
+      new HumanMessage(
+        `你是一个有帮助的助手。请针对用户的问题简洁、直接地作答。\n\n用户问题：\n${input}`
+      ),
+    ]);
+    const answer = typeof response.content === 'string' ? response.content : String(response.content ?? '');
+    spin.stop('回答完成');
+    note(answer, '💬 回答');
+    return {
+      finalPlan: answer,
+      currentStep: 'complete',
+    };
+  } catch (error) {
+    spin.stop('回答失败 ❌');
+    console.error('[Agent] 简单回答失败:', error);
+    return {
+      error: `简单回答失败: ${error instanceof Error ? error.message : String(error)}`,
       currentStep: 'error',
     };
   }
@@ -398,6 +443,10 @@ function routeAfterPlanning(state: AgentStateType): string {
     return 'planning'; // 重新规划
   }
   
+  // 简单问询：交给简单回答节点（GPT 5.1 chat）
+  if (state.currentStep === 'simple_answer') {
+    return 'simple_answer';
+  }
   // 根据 nextTask 的类型决定下一步
   if (state.currentStep === 'research') {
     return 'research';
@@ -437,15 +486,18 @@ function routeAfterResearch(state: AgentStateType): string {
 // 构建 Agent 工作流图
 const agentWorkflow = new StateGraph(AgentState)
   .addNode('planning', planning)
+  .addNode('simple_answer', simpleAnswer)
   .addNode('research', research)
   .addNode('writer', writing)
   .addEdge(START, 'planning')
   .addConditionalEdges('planning', routeAfterPlanning, {
     planning: 'planning', // 重新规划
+    simple_answer: 'simple_answer',
     research: 'research',
     writer: 'writer',
     end: END,
   })
+  .addEdge('simple_answer', END)
   .addConditionalEdges('research', routeAfterResearch, {
     research: 'research',
     writer: 'writer',

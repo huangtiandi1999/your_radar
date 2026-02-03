@@ -30,6 +30,7 @@
     "@langchain/core": "^1.1.5",
     "@langchain/deepseek": "^1.0.5",
     "@langchain/langgraph": "^1.0.7",
+    "@langchain/mcp-adapters": "^1.1.2",
     "@langchain/openai": "^1.2.0",
     "@langchain/tavily": "^1.2.0",
     "ansis": "^4.2.0",
